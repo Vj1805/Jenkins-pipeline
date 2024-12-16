@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'us-east-1' // Specify the AWS region
+        REPO_NAME = 'react-app' // ECR repository name
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'npm test'
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'npm run build'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                script {
+                    def imageTag = "${env.BUILD_NUMBER}"
+                    sh "docker build -t ${REPO_NAME}:${imageTag} ."
+                }
+            }
+        }
+
+        stage('Login to AWS ECR') {
+            steps {
+                script {
+                    def loginCommand = sh(
+                        script: "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin <ACCOUNT_ID>.dkr.ecr.${AWS_REGION}.amazonaws.com",
+                        returnStdout: true
+                    )
+                    sh loginCommand
+                }
+            }
+        }
+
+        stage('Push to AWS ECR') {
+            steps {
+                script {
+                    def imageTag = "${env.BUILD_NUMBER}"
+                    sh "docker tag ${REPO_NAME}:${imageTag} <ACCOUNT_ID>.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${imageTag}"
+                    sh "docker push <ACCOUNT_ID>.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${imageTag}"
+                }
+            }
+        }
+
+        stage('Deploy to Environment') {
+            steps {
+                script {
+                    def environments = ['staging', 'production']
+
+                    for (env in environments) {
+                        sh "docker run -e ENV=${env} <ACCOUNT_ID>.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${env.BUILD_NUMBER}"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Pipeline executed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed.'
+        }
+    }
+}
